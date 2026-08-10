@@ -16,6 +16,9 @@ import io
 import gc
 from collections import deque
 from dotenv import load_dotenv
+import logging
+from pathlib import Path
+from xyzservices import TileProvider
 
 load_dotenv()
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
@@ -35,9 +38,65 @@ MAX_SENT = 5000
 sismos_enviados = set()
 _sismos_order = deque(maxlen=MAX_SENT)  # para limpeza FIFO
 
-# Session reutilizável
+# ============================================================
+# HTTP / IDENTIFICAÇÃO DA APLICAÇÃO
+# ============================================================
+
+APP_VERSION = os.getenv("APP_VERSION", "1.0")
+
+MAP_USER_AGENT = os.getenv(
+    "MAP_USER_AGENT",
+    f"SismoBot/{APP_VERSION} (+https://teu-dominio.pt)"
+)
+
+MAP_REFERER = os.getenv(
+    "MAP_REFERER",
+    "https://teu-dominio.pt/"
+)
+
 session = requests.Session()
-session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; SismoBot/2.0)"})
+
+session.headers.update({
+    "User-Agent": MAP_USER_AGENT,
+    "Accept": "application/json,text/plain,*/*",
+})
+
+tile_session = requests.Session()
+
+tile_session.headers.update({
+    "User-Agent": MAP_USER_AGENT,
+    "Referer": MAP_REFERER,
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+})
+
+# ============================================================
+# CONFIGURAÇÃO DOS MAPAS
+# ============================================================
+
+MAP_PROVIDER = os.getenv("MAP_PROVIDER", "osm").lower()
+
+MAP_ZOOM = int(os.getenv("MAP_ZOOM", "8"))
+
+MAP_TIMEOUT = float(os.getenv("MAP_TIMEOUT", "12"))
+
+# Cache persistente.
+TILE_CACHE_DIR = Path(
+    os.getenv("TILE_CACHE_DIR", "/tmp/atterratreme-tile-cache")
+)
+
+TILE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+OSM_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+OSM_ATTRIBUTION = "© OpenStreetMap contributors"
+
+OSM_PROVIDER = TileProvider(
+    name="OpenStreetMap",
+    url=OSM_TILE_URL,
+    attribution=OSM_ATTRIBUTION,
+    min_zoom=0,
+    max_zoom=19,
+)
 
 # Lock para evitar geração simultânea de imagens
 image_lock = threading.Lock()
@@ -47,60 +106,234 @@ def overlay_text(img, text, position, font, color):
     draw = ImageDraw.Draw(img)
     draw.text(position, text, font=font, fill=color)
 
+def get_map_provider():
+    if MAP_PROVIDER == "cartodb":
+        return ctx.providers.CartoDB.Voyager
+
+    return OSM_PROVIDER
+
 
 def create_map_image(df) -> Image.Image:
-    """Gera o mapa em memória e devolve um PIL.Image (sem gravar em disco)."""
+    """
+    Gera o mapa em memória.
+
+    Características:
+    - User-Agent identificável
+    - Referer
+    - cache persistente do contextily
+    - zoom controlado
+    - timeout
+    - attribution
+    - fallback sem basemap caso o provider falhe
+    """
+
     latest = df.iloc[-1]
 
     gdf = gpd.GeoDataFrame(
         df,
-        geometry=gpd.points_from_xy(df.longitude, df.latitude),
+        geometry=gpd.points_from_xy(
+            df.longitude,
+            df.latitude
+        ),
         crs="EPSG:4326"
     ).to_crs(epsg=3857)
 
     latest_point = gdf.iloc[-1]
+
     cx = latest_point.geometry.x
     cy = latest_point.geometry.y
+
+    # Janela aproximada de 350 km x 350 km.
     window = 175_000
 
-    fig = plt.figure(figsize=(6, 6), dpi=180)
+    fig = plt.figure(
+        figsize=(6, 6),
+        dpi=180
+    )
+
     ax = fig.add_axes([0, 0, 1, 1])
 
-    ax.set_xlim(cx - window, cx + window)
-    ax.set_ylim(cy - window, cy + window)
+    ax.set_xlim(
+        cx - window,
+        cx + window
+    )
+
+    ax.set_ylim(
+        cy - window,
+        cy + window
+    )
+
     ax.set_aspect("equal")
 
-    try:
-        ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik, attribution=False)
-    except Exception as e:
-        print(f"Aviso basemap: {e}")
+    # --------------------------------------------------------
+    # BASEMAP
+    # --------------------------------------------------------
 
-    # Halos e epicentro
-    ax.scatter(cx, cy, s=7000, color="red", alpha=0.10, zorder=2)
-    ax.scatter(cx, cy, s=2500, color="red", alpha=0.25, zorder=3)
-    ax.scatter(cx, cy, s=350, marker="*", color="darkred", edgecolors="white", linewidth=1.5, zorder=4)
+    basemap_ok = False
+
+    try:
+        provider = get_map_provider()
+
+        ctx.add_basemap(
+            ax,
+            source=provider,
+            zoom=MAP_ZOOM,
+            headers={
+                "User-Agent": MAP_USER_AGENT,
+                "Referer": MAP_REFERER,
+                "Accept": "image/png,image/*;q=0.9,*/*;q=0.8",
+            },
+            attribution=OSM_ATTRIBUTION if MAP_PROVIDER == "osm" else None,
+            timeout=MAP_TIMEOUT,
+            zoom_adjust=0,
+        )
+
+        basemap_ok = True
+
+    except Exception as e:
+        print(
+            f"[MAPA] Basemap indisponível "
+            f"(provider={MAP_PROVIDER}): {e}"
+        )
+
+    # --------------------------------------------------------
+    # FALLBACK
+    # --------------------------------------------------------
+
+    if not basemap_ok and MAP_PROVIDER == "osm":
+
+        print(
+            "[MAPA] OSM falhou. "
+            "A tentar CartoDB Voyager como fallback..."
+        )
+
+        try:
+            ctx.add_basemap(
+                ax,
+                source=ctx.providers.CartoDB.Voyager,
+                zoom=MAP_ZOOM,
+                timeout=MAP_TIMEOUT,
+                use_cache=True,
+                attribution=None,
+            )
+
+            basemap_ok = True
+
+        except Exception as fallback_error:
+
+            print(
+                f"[MAPA] Fallback também falhou: "
+                f"{fallback_error}"
+            )
+
+    # --------------------------------------------------------
+    # MARCADOR DO SISMO
+    # --------------------------------------------------------
+
+    ax.scatter(
+        cx,
+        cy,
+        s=7000,
+        color="red",
+        alpha=0.10,
+        zorder=2
+    )
+
+    ax.scatter(
+        cx,
+        cy,
+        s=2500,
+        color="red",
+        alpha=0.25,
+        zorder=3
+    )
+
+    ax.scatter(
+        cx,
+        cy,
+        s=350,
+        marker="*",
+        color="darkred",
+        edgecolors="white",
+        linewidth=1.5,
+        zorder=4
+    )
 
     ax.text(
-        cx, cy + 25000, f"M {latest['scale']:.1f}",
-        fontsize=16, fontweight="bold", ha="center", va="bottom",
+        cx,
+        cy + 25000,
+        f"M {latest['scale']:.1f}",
+        fontsize=16,
+        fontweight="bold",
+        ha="center",
+        va="bottom",
         color="black",
-        bbox=dict(facecolor="white", edgecolor="black", alpha=0.9, boxstyle="round,pad=0.3"),
+        bbox=dict(
+            facecolor="white",
+            edgecolor="black",
+            alpha=0.9,
+            boxstyle="round,pad=0.3"
+        ),
         zorder=5
     )
 
-    ax.set_axis_off()
-    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+    # Se não houve basemap, não deixa o mapa vazio.
+    if not basemap_ok:
+        ax.text(
+            0.5,
+            0.03,
+            "Mapa base temporariamente indisponível",
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            color="black",
+            bbox=dict(
+                facecolor="white",
+                alpha=0.8,
+                edgecolor="none"
+            ),
+            zorder=10
+        )
 
-    # Guardar diretamente em memória
+    ax.set_axis_off()
+
+    fig.subplots_adjust(
+        left=0,
+        right=1,
+        bottom=0,
+        top=1
+    )
+
+    # --------------------------------------------------------
+    # PNG EM MEMÓRIA
+    # --------------------------------------------------------
+
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=180, facecolor="white", pad_inches=0)
-    plt.close(fig)          # fecha a figura
-    plt.close('all')        # segurança extra
+
+    fig.savefig(
+        buf,
+        format="png",
+        dpi=180,
+        facecolor="white",
+        pad_inches=0
+    )
+
+    plt.close(fig)
+    plt.close("all")
+
     buf.seek(0)
 
     img = Image.open(buf).convert("RGB")
+
+    # O PIL pode manter referência ao buffer.
+    # Copiamos para memória independente.
+    img_copy = img.copy()
+
+    img.close()
     buf.close()
-    return img
+
+    return img_copy
 
 
 def generate_final_image(sismo_data) -> bytes:
