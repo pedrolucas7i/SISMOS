@@ -502,46 +502,42 @@ function definirLegenda() {
             </button>
 
             <div id="legend-panel" class="legend-panel hidden">
-                <div class="legend-title">
-                    <i class="bi bi-activity"></i>
-                    Magnitude
-                </div>
                 <table class="legend-table">
                     <tr>
                         <td><i class="bi bi-record-circle-fill" style="color:#4a4a4a"></i></td>
-                        <td>&lt; 2.0</td>
+                        <td>&lt;2</td>
                     </tr>
                     <tr>
                         <td><i class="bi bi-record-circle-fill" style="color:#7B4B1A"></i></td>
-                        <td>2.0 – 2.9</td>
+                        <td>&lt;3</td>
                     </tr>
                     <tr>
                         <td><i class="bi bi-record-circle-fill" style="color:#A66A2B"></i></td>
-                        <td>3.0 – 3.9</td>
+                        <td>&lt;4</td>
                     </tr>
                     <tr>
                         <td><i class="bi bi-record-circle-fill" style="color:#D46A00"></i></td>
-                        <td>4.0 – 4.9</td>
+                        <td>&lt;5</td>
                     </tr>
                     <tr>
                         <td><i class="bi bi-record-circle-fill" style="color:#E53935"></i></td>
-                        <td>5.0 – 5.9</td>
+                        <td>&lt;6</td>
                     </tr>
                     <tr>
                         <td><i class="bi bi-record-circle-fill" style="color:#8E0000"></i></td>
-                        <td>≥ 6.0</td>
+                        <td>≥6</td>
                     </tr>
-                    <tr class="legend-divider">
-                        <td colspan="2"></td>
-                    </tr>
+                    <!--
                     <tr>
                         <td>
-                            <span class="legend-sentido-icon">
-                                <i class="bi bi-activity"></i>
-                            </span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" fill="#89aeff" class="bi bi-circle" viewBox="0 0 16 16">
+                                <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+                                <circle cx="7.5" cy="7.5" r="7.5" fill="#0e53b9" />
+                            </svg>
                         </td>
-                        <td>Sentido</td>
+                        <td>ems</td>
                     </tr>
+                    -->
                 </table>
             </div>
         `;

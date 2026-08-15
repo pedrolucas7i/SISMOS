@@ -713,12 +713,11 @@ body {
 /* Painel – largura fixa e estável */
 .legend-panel {
     background: #1b1f24;
-    padding: 10px 12px;
+    padding: 5px 7px;
     border-radius: 10px;
     color: #fff;
-    font-size: 13px;
+    font-size: 10px;
     box-shadow: 0 3px 12px rgba(0, 0, 0, .35);
-    width: 118px;          /* largura controlada */
     box-sizing: border-box;
 }
 
@@ -726,18 +725,6 @@ body {
     display: none;
 }
 
-.legend-title {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 600;
-    margin-bottom: 8px;
-    font-size: 13px;
-}
-
-.legend-title i {
-    color: #ff7043;
-}
 
 .legend-table {
     width: 100%;
@@ -745,38 +732,9 @@ body {
 }
 
 .legend-table td {
-    padding: 3px 4px;
+    padding: 1px 2px;
     vertical-align: middle;
     white-space: nowrap;
-}
-
-.legend-table td:first-child {
-    width: 22px;
-    text-align: center;
-}
-
-/* Separador visual entre magnitude e sentido */
-.legend-divider td {
-    padding: 6px 0 4px;
-    border-top: 1px solid #3a3f47;
-}
-
-/* Ícone de sentido na legenda */
-.legend-sentido-icon {
-    display: inline-flex;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: #ff7043;
-    border: 1.5px solid #fff;
-    align-items: center;
-    justify-content: center;
-}
-
-.legend-sentido-icon i {
-    color: #fff;
-    font-size: 8px;
-    line-height: 1;
 }
 
 /*==================================================
