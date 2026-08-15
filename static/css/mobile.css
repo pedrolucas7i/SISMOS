@@ -75,6 +75,21 @@
         font-size: 18px;
     }
 
+    .intervalo {
+        width: 34px;
+        padding-left: 0px;
+        padding-right: 0px;
+        font-size: 18px !important;
+    }
+
+    .intervalo-labels {
+        font-size: 8px;
+    }
+
+    .intervalo-labels strong {
+        font-size: 9px;
+    }
+
     .leaflet-control-zoom a {
         width: 34px !important;
         height: 34px !important;
