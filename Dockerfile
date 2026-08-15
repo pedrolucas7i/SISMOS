@@ -10,7 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gdal-bin \
     libspatialindex-dev \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -snf /usr/share/zoneinfo/Europe/Lisbon /etc/localtime \
+    && echo "Europe/Lisbon" > /etc/timezone
 
 WORKDIR /app
 

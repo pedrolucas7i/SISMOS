@@ -8,6 +8,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import contextily as ctx
 import geopandas as gpd
+from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
 import os
 import threading
@@ -97,6 +98,8 @@ OSM_PROVIDER = TileProvider(
     min_zoom=0,
     max_zoom=19,
 )
+
+PORTUGAL_TZ = ZoneInfo("Europe/Lisbon")
 
 # Lock para evitar geração simultânea de imagens
 image_lock = threading.Lock()
@@ -464,16 +467,21 @@ def obter_sismos():
     # Converter time para datetime
     for s in sismos:
         try:
-            time_str = s["time"].replace("Z", "+00:00")
-            s["datetime"] = datetime.fromisoformat(time_str)
+            time_str = s["time"].replace("Z", "")
+            s["datetime"] = datetime.fromisoformat(time_str).replace(tzinfo=timezone.utc)
         except Exception:
             try:
-                s["datetime"] = datetime.fromisoformat(s["time"])
+                s["datetime"] = datetime.fromisoformat(s["time"]).replace(tzinfo=timezone.utc)
             except Exception:
                 try:
-                    s["datetime"] = datetime.strptime(s["time"], "%Y-%m-%d %H:%M:%S")
+                    s["datetime"] = datetime.strptime(
+                        s["time"], "%Y-%m-%d %H:%M:%S"
+                    ).replace(tzinfo=timezone.utc)
                 except Exception:
                     s["datetime"] = datetime.now(timezone.utc)
+
+        # Timezone de Potugal Continental
+        s["time_pt"] = s["datetime"].astimezone(PORTUGAL_TZ).strftime("%d-%m-%Y pelas %H:%M")
 
     sismos.sort(key=lambda x: x["datetime"], reverse=True)
     return {
@@ -523,7 +531,7 @@ def monitor_sismos():
                     "id": s["time"],
                     "location": s.get("obsRegion") or "Portugal",
                     "scale": s["magnitude"] or 0.0,
-                    "date": s["datetime"].strftime("%d-%m-%Y pelas %H:%M UTC"),
+                    "date": s["time_pt"],
                     "intensity": "Sem info a esta hora",
                     "latitude": s["latitude"],
                     "longitude": s["longitude"]
