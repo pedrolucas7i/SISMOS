@@ -199,7 +199,7 @@ function criarMarcador(s) {
                 className: "sentido-badge",
                 html: `
                     <div class="sentido-badge-inner" style="background-color: ${corMagnitude(s.magnitude)}">
-                        <i class="bi bi-activity"></i>
+                        <h6 style="color: white">${s.intensity}</h6>
                     </div>
                 `,
                 iconSize: [raio * 2, raio * 2],
