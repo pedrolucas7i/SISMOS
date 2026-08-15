@@ -37,6 +37,37 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 API_CONTINENTE = "https://api.ipma.pt/open-data/observation/seismic/7.json"
 API_ACORES = "https://api.ipma.pt/open-data/observation/seismic/3.json"
 
+BOUNDING_BOXES = [
+    {
+        "name": "Portugal Continental",
+        "min_lon": -9.733887,
+        "min_lat": 36.791691,
+        "max_lon": -6.064453,
+        "max_lat": 42.309815,
+    },
+    {
+        "name": "Açores",
+        "min_lon": -31.530762,
+        "min_lat": 36.544949,
+        "max_lon": -24.301758,
+        "max_lat": 39.993956,
+    },
+    {
+        "name": "Madeira",
+        "min_lon": -18.259277,
+        "min_lat": 31.970804,
+        "max_lon": -15.380859,
+        "max_lat": 33.614619,
+    },
+    {
+        "name": "Ilhas Selvagens",
+        "min_lon": -16.163635,
+        "min_lat": 29.968022,
+        "max_lon": -15.759888,
+        "max_lat": 30.210421,
+    },
+]
+
 # Limitar tamanho do histórico
 MAX_SENT = 5000
 sismos_enviados = set()
@@ -107,6 +138,21 @@ PORTUGAL_TZ = ZoneInfo("Europe/Lisbon")
 # Lock para evitar geração simultânea de imagens
 image_lock = threading.Lock()
 
+def in_bounding_boxes(sismo):
+    lat = sismo.get("latitude")
+    lon = sismo.get("longitude")
+
+    if lat is None or lon is None:
+        return False
+
+    for box in BOUNDING_BOXES:
+        if (
+            box["min_lat"] <= lat <= box["max_lat"]
+            and box["min_lon"] <= lon <= box["max_lon"]
+        ):
+            return True
+
+    return False
 
 def overlay_text(img, text, position, font, color):
     draw = ImageDraw.Draw(img)
@@ -505,7 +551,6 @@ def add_enviado(sismo_id: str):
     sismos_enviados.add(sismo_id)
     _sismos_order.append(sismo_id)
 
-
 def monitor_sismos():
     print("Monitor de sismos iniciado.")
     consecutive_errors = 0
@@ -516,13 +561,26 @@ def monitor_sismos():
         try:
             data = obter_sismos()
 
-            if data["data"]:
-                novos = [s for s in data["data"] if s["time"] not in sismos_enviados]
-                # novos = data["data"][:10]  # só para testes
+            # FILTRO POR BOUNDING BOX
+            sismos_monitor = [
+                s for s in data["data"]
+                if in_bounding_boxes(s)
+            ]
+
+            if sismos_monitor:
+                novos = [
+                    s for s in sismos_monitor
+                    if s["time"] not in sismos_enviados
+                ]
+
+                # novos = sismos_monitor[:10]  # só para testes
 
                 if novos:
                     novos.sort(key=lambda x: x["datetime"])
-                    print(f"Foram encontrados {len(novos)} novos sismos.")
+                    print(
+                        f"Foram encontrados {len(novos)} novos sismos "
+                        f"dentro das bounding boxes."
+                    )
 
                     for s in novos:
                         sismo = {
@@ -542,11 +600,20 @@ def monitor_sismos():
 
                         try:
                             image_bytes, info_image, map_image = generate_final_image(sismo)
-                            if enviar_discord(sismo, image_bytes, info_image, map_image):
+
+                            if enviar_discord(
+                                sismo,
+                                image_bytes,
+                                info_image,
+                                map_image
+                            ):
                                 add_enviado(s["time"])
                                 time.sleep(1.5)
+
                         except Exception as e:
-                            print(f"Erro ao processar sismo {s['time']}: {e}")
+                            print(
+                                f"Erro ao processar sismo {s['time']}: {e}"
+                            )
                             # não marca como enviado → tenta na próxima ronda
 
             consecutive_errors = 0
@@ -559,13 +626,15 @@ def monitor_sismos():
                         session=session,
                         only_relevant_geo=True,
                     )
+
                     for act in cems_novos:
                         print(
                             f"CEMS nova ativação sísmica: "
                             f"{act.get('code')} — {act.get('name')} "
                             f"({act.get('portal_url')})"
                         )
-                        # Opcional: aviso Discord
+
+                        # Enviar aviso para o Discord
                         # if DISCORD_WEBHOOK:
                         #     session.post(
                         #         DISCORD_WEBHOOK,
@@ -578,6 +647,7 @@ def monitor_sismos():
                         #         },
                         #         timeout=15,
                         #     )
+
                 except Exception as e:
                     print(f"CEMS poll: {e}")
 
