@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/mobile.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/popup.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/cems.css') }}">
 </head>
 
 <body>
@@ -48,6 +49,14 @@
 
                 </div>
 
+            </div>
+
+            <div class="info-card cems-card" title="Ativações Copernicus EMS (sismos)">
+                <i class="bi bi-satellite"></i>
+                <div>
+                    <span>CEMS</span>
+                    <strong id="total-cems">0</strong>
+                </div>
             </div>
 
             <button id="menu-btn" title="Menu">
@@ -182,7 +191,7 @@
     </script>
 
     <script src="{{ url_for('static', filename='js/leaflet-heat.js') }}"></script>
-
+    <script src="{{ url_for('static', filename='js/cems.js') }}"></script>
     <script src="{{ url_for('static', filename='js/map.js') }}"></script>
 </body>
 

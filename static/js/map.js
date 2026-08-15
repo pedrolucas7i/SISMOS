@@ -231,6 +231,15 @@ function criarMarcador(s) {
         className: "earthquake-popup"
     });
 
+    marker.on("popupopen", function () {
+        const el = this.getPopup().getElement();
+        if (!el || typeof enriquecerPopupComCems !== "function") return;
+        const content = el.querySelector(".eq-popup");
+        if (content && !content.querySelector(".cems-match-banner")) {
+            enriquecerPopupComCems(s, content);
+        }
+    });
+
     marker.addTo(markersLayer);
 
     // Área de clique maior
@@ -567,6 +576,9 @@ function configurarControles() {
                 </button>
                 <button id="heat-btn" title="Heatmap">
                     <i class="bi bi-fire"></i>
+                </button>
+                <button id="cems-btn" title="CEMS Rapid Mapping" class="active">
+                    <i>🛰</i>
                 </button>`;
             L.DomEvent.disableClickPropagation(div);
             return div;
@@ -585,6 +597,18 @@ function configurarControles() {
                 heatLayer.addTo(map);
             } else {
                 map.removeLayer(heatLayer);
+            }
+            return;
+        }
+
+        const cemsBtn = e.target.closest("#cems-btn");
+        if (cemsBtn && window.cemsLayer) {
+            if (map.hasLayer(cemsLayer)) {
+                map.removeLayer(cemsLayer);
+                cemsBtn.classList.remove("active");
+            } else {
+                cemsLayer.addTo(map);
+                cemsBtn.classList.add("active");
             }
             return;
         }
@@ -693,6 +717,16 @@ function inicializarMapa() {
     map.on("click", selecionarSismoMaisProximo);
     map.on("zoomend", atualizarVisibilidadePlacas);
     window.addEventListener("resize", ajustarAlturaIntervalo);
+    if (typeof carregarCems === "function") {
+        carregarCems().then(() => {
+            if (window.cemsLayer && !map.hasLayer(cemsLayer)) {
+                cemsLayer.addTo(map);
+            }
+            if (typeof iniciarRefreshCems === "function") {
+                iniciarRefreshCems(10 * 60 * 1000);
+            }
+        });
+    }
 }
 
 inicializarMapa();

@@ -1,0 +1,87 @@
+/*==================================================
+=              COPERNICUS EMS MARKERS              =
+==================================================*/
+
+.cems-marker {
+    background: transparent;
+    border: none;
+}
+
+.cems-marker-inner {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #1565c0, #0d47a1);
+    border: 2px solid #90caf9;
+    box-shadow:
+        0 0 0 3px rgba(21, 101, 192, 0.35),
+        0 4px 12px rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #e3f2fd;
+    font-size: 16px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cems-marker-inner:hover {
+    transform: scale(1.12);
+    box-shadow:
+        0 0 0 4px rgba(21, 101, 192, 0.5),
+        0 6px 16px rgba(0, 0, 0, 0.5);
+}
+
+.cems-badge {
+    background: linear-gradient(145deg, #1565c0, #0d47a1) !important;
+    font-size: 20px !important;
+    box-shadow: 0 0 15px rgba(33, 150, 243, 0.35) !important;
+}
+
+.cems-header {
+    background: #1a237e !important;
+}
+
+.cems-popup a {
+    color: #90caf9;
+    text-decoration: none;
+}
+
+.cems-popup a:hover {
+    text-decoration: underline;
+    color: #bbdefb;
+}
+
+/* Banner de match dentro do popup IPMA */
+.cems-match-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0;
+    padding: 12px 14px;
+    background: #0d47a1;
+    border-top: 1px solid #1565c0;
+    font-size: 13px;
+    color: #e3f2fd;
+    line-height: 1.4;
+}
+
+.cems-match-banner i {
+    color: #90caf9;
+    font-size: 18px;
+    margin-top: 1px;
+}
+
+.cems-match-banner a {
+    color: #fff;
+    font-weight: 600;
+    text-decoration: underline;
+}
+
+/* Info card CEMS na topbar */
+.info-card.cems-card i {
+    color: #42a5f5;
+}
+
+.info-card.cems-card strong {
+    color: #90caf9;
+}

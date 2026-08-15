@@ -10,6 +10,8 @@ import contextily as ctx
 import geopandas as gpd
 from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
+from copernicus_routes import register_copernicus_routes
+from copernicus_cems import poll_new_earthquake_activations
 import os
 import threading
 import time
@@ -27,6 +29,7 @@ DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", "3000"))
 
 app = Flask(__name__)
+register_copernicus_routes(app)
 # Coolify / Traefik terminate TLS and forward X-Forwarded-* headers
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
@@ -506,55 +509,81 @@ def add_enviado(sismo_id: str):
 def monitor_sismos():
     print("Monitor de sismos iniciado.")
     consecutive_errors = 0
+    cycle_count = 0
 
     while True:
+        cycle_count += 1
         try:
             data = obter_sismos()
 
-            if not data["data"]:
-                time.sleep(45)
-                continue
+            if data["data"]:
+                novos = [s for s in data["data"] if s["time"] not in sismos_enviados]
+                # novos = data["data"][:10]  # só para testes
 
-            novos = [s for s in data["data"] if s["time"] not in sismos_enviados]
-            # novos = data["data"][:10]  # apenas os 10 mais recentes (for testing purposes)
-            
-            if not novos:
-                consecutive_errors = 0
-                time.sleep(45)
-                continue
+                if novos:
+                    novos.sort(key=lambda x: x["datetime"])
+                    print(f"Foram encontrados {len(novos)} novos sismos.")
 
-            novos.sort(key=lambda x: x["datetime"])
-            print(f"Foram encontrados {len(novos)} novos sismos.")
+                    for s in novos:
+                        sismo = {
+                            "id": s["time"],
+                            "location": s.get("obsRegion") or "Portugal",
+                            "scale": s["magnitude"] or 0.0,
+                            "date": s["time_pt"],
+                            "intensity": "Sem info a esta hora",
+                            "latitude": s["latitude"],
+                            "longitude": s["longitude"],
+                        }
 
-            for s in novos:
-                sismo = {
-                    "id": s["time"],
-                    "location": s.get("obsRegion") or "Portugal",
-                    "scale": s["magnitude"] or 0.0,
-                    "date": s["time_pt"],
-                    "intensity": "Sem info a esta hora",
-                    "latitude": s["latitude"],
-                    "longitude": s["longitude"]
-                }
+                        print(
+                            f"Processar → {sismo['location']} "
+                            f"M{sismo['scale']} | {sismo['id']}"
+                        )
 
-                print(f"Processar → {sismo['location']} M{sismo['scale']} | {sismo['id']}")
-
-                try:
-                    image_bytes, info_image, map_image = generate_final_image(sismo)
-                    if enviar_discord(sismo, image_bytes, info_image, map_image):
-                        add_enviado(s["time"])
-                        time.sleep(1.5)
-                except Exception as e:
-                    print(f"Erro ao processar sismo {s['time']}: {e}")
-                    # não marca como enviado → tenta na próxima ronda
+                        try:
+                            image_bytes, info_image, map_image = generate_final_image(sismo)
+                            if enviar_discord(sismo, image_bytes, info_image, map_image):
+                                add_enviado(s["time"])
+                                time.sleep(1.5)
+                        except Exception as e:
+                            print(f"Erro ao processar sismo {s['time']}: {e}")
+                            # não marca como enviado → tenta na próxima ronda
 
             consecutive_errors = 0
             gc.collect()
 
+            # CEMS: a cada ~10 ciclos (~7–8 min), independente de haver sismos IPMA
+            if cycle_count % 10 == 0:
+                try:
+                    cems_novos = poll_new_earthquake_activations(
+                        session=session,
+                        only_relevant_geo=True,
+                    )
+                    for act in cems_novos:
+                        print(
+                            f"CEMS nova ativação sísmica: "
+                            f"{act.get('code')} — {act.get('name')} "
+                            f"({act.get('portal_url')})"
+                        )
+                        # Opcional: aviso Discord
+                        # if DISCORD_WEBHOOK:
+                        #     session.post(
+                        #         DISCORD_WEBHOOK,
+                        #         json={
+                        #             "content": (
+                        #                 f"🛰️ **CEMS Rapid Mapping**\n"
+                        #                 f"**{act['code']}** — {act['name']}\n"
+                        #                 f"{act['portal_url']}"
+                        #             )
+                        #         },
+                        #         timeout=15,
+                        #     )
+                except Exception as e:
+                    print(f"CEMS poll: {e}")
+
         except Exception as e:
             consecutive_errors += 1
             print(f"Erro no monitor (#{consecutive_errors}): {e}")
-            # Backoff exponencial leve
             sleep_time = min(30 * consecutive_errors, 180)
             time.sleep(sleep_time)
             continue
