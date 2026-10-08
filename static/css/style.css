@@ -514,6 +514,230 @@ body {
 }
 
 /*==================================================
+               INTERVALO (DATE RANGE)           
+==================================================*/
+
+.intervalo {
+    background: #1b1f24;
+    border-radius: 10px;
+    padding: 12px 6px;
+    color: #fff;
+    font-size: 13px;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, .35);
+    user-select: none;
+}
+
+.intervalo-title {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    font-size: 13px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.intervalo-title i {
+    font-size: 14px;
+    color: #ff7043;
+}
+
+.intervalo-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-height: 0; /* permite encolher */
+}
+
+.intervalo-labels {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    font-size: 11px;
+    color: #9fa8b1;
+    text-align: center;
+    line-height: 1.3;
+    flex-shrink: 0;
+}
+
+.intervalo-labels strong {
+    color: #fff;
+    font-weight: 500;
+    font-size: 12px;
+}
+
+/* Dual range vertical – altura dinâmica controlada por JS */
+.range-wrapper {
+    position: relative;
+    width: 28px;
+    height: 200px;          /* valor inicial, JS sobrescreve */
+    min-height: 120px;
+    flex-shrink: 0;
+}
+
+/* Track de fundo (cinza) */
+.range-wrapper::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    width: 6px;
+    height: 100%;
+    background: #3a3f47;
+    border-radius: 3px;
+    z-index: 0;
+}
+
+/* Barra laranja entre os dois handles */
+.range-track {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 6px;
+    background: #ff7043;
+    border-radius: 3px;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.85;
+}
+
+.range-wrapper input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    writing-mode: vertical-lr;
+    direction: rtl;
+    width: 28px;
+    height: 100%;           /* herda a altura do wrapper */
+    background: transparent;
+    position: absolute;
+    left: 0;
+    top: 0;
+    margin: 0;
+    padding: 0;
+    pointer-events: none;
+    z-index: 2;
+}
+
+/* Remove o track nativo */
+.range-wrapper input[type="range"]::-webkit-slider-runnable-track {
+    -webkit-appearance: none;
+    background: transparent;
+    border: none;
+}
+
+.range-wrapper input[type="range"]::-moz-range-track {
+    background: transparent;
+    border: none;
+}
+
+/* Thumb */
+.range-wrapper input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #ff7043;
+    cursor: grab;
+    pointer-events: auto;
+    box-shadow: 0 0 0 3px rgba(255, 112, 67, 0.25);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.range-wrapper input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 0 4px rgba(255, 112, 67, 0.35);
+}
+
+.range-wrapper input[type="range"]::-webkit-slider-thumb:active {
+    cursor: grabbing;
+}
+
+.range-wrapper input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #ff7043;
+    cursor: grab;
+    pointer-events: auto;
+    border: none;
+    box-shadow: 0 0 0 3px rgba(255, 112, 67, 0.25);
+}
+
+.range-wrapper input[type="range"]::-moz-range-thumb:hover {
+    transform: scale(1.2);
+}
+
+/*==================================================
+=                 LEGENDA COLAPSÁVEL               =
+==================================================*/
+
+.legend-control {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.legend-toggle {
+    width: 42px;
+    height: 42px;
+    border: none;
+    border-radius: 10px;
+    background: #1b1f24;
+    color: #fff;
+    font-size: 20px;
+    cursor: pointer;
+    transition: .25s;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.legend-toggle:hover,
+.legend-toggle.active {
+    background: #ff7043;
+}
+
+.legend-toggle i {
+    pointer-events: none;
+}
+
+/* Painel – largura fixa e estável */
+.legend-panel {
+    background: #1b1f24;
+    padding: 5px 7px;
+    border-radius: 10px;
+    color: #fff;
+    font-size: 10px;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, .35);
+    box-sizing: border-box;
+}
+
+.legend-panel.hidden {
+    display: none;
+}
+
+
+.legend-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.legend-table td {
+    padding: 1px 2px;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+/*==================================================
 =              LEAFLET ZOOM CONTROLS               =
 ==================================================*/
 
@@ -593,4 +817,27 @@ body {
         opacity: 0;
     }
 
+}
+
+/* Badge de sismo sentido */
+.sentido-badge {
+    background: transparent !important;
+    border: none !important;
+}
+
+.sentido-badge-inner {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    border: 1.5px solid #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.sentido-badge-inner i {
+    color: #ffffff;
+    font-size: 10px;
+    line-height: 1;
 }

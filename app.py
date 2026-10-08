@@ -8,7 +8,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import contextily as ctx
 import geopandas as gpd
+from zoneinfo import ZoneInfo
 from datetime import datetime, timezone
+from copernicus_routes import register_copernicus_routes
+from copernicus_cems import poll_new_earthquake_activations
 import os
 import threading
 import time
@@ -16,6 +19,9 @@ import io
 import gc
 from collections import deque
 from dotenv import load_dotenv
+import logging
+from pathlib import Path
+from xyzservices import TileProvider
 
 load_dotenv()
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
@@ -23,6 +29,7 @@ DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
 PORT = int(os.environ.get("PORT", "3000"))
 
 app = Flask(__name__)
+register_copernicus_routes(app)
 # Coolify / Traefik terminate TLS and forward X-Forwarded-* headers
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
@@ -30,77 +37,355 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 API_CONTINENTE = "https://api.ipma.pt/open-data/observation/seismic/7.json"
 API_ACORES = "https://api.ipma.pt/open-data/observation/seismic/3.json"
 
+BOUNDING_BOXES = [
+    {
+        "name": "Portugal Continental",
+        "min_lon": -9.733887,
+        "min_lat": 36.791691,
+        "max_lon": -6.064453,
+        "max_lat": 42.309815,
+    },
+    {
+        "name": "Açores",
+        "min_lon": -31.530762,
+        "min_lat": 36.544949,
+        "max_lon": -24.301758,
+        "max_lat": 39.993956,
+    },
+    {
+        "name": "Madeira",
+        "min_lon": -18.259277,
+        "min_lat": 31.970804,
+        "max_lon": -15.380859,
+        "max_lat": 33.614619,
+    },
+    {
+        "name": "Ilhas Selvagens",
+        "min_lon": -16.163635,
+        "min_lat": 29.968022,
+        "max_lon": -15.759888,
+        "max_lat": 30.210421,
+    },
+]
+
 # Limitar tamanho do histórico
 MAX_SENT = 5000
 sismos_enviados = set()
 _sismos_order = deque(maxlen=MAX_SENT)  # para limpeza FIFO
 
-# Session reutilizável
+# ============================================================
+# HTTP / IDENTIFICAÇÃO DA APLICAÇÃO
+# ============================================================
+
+APP_VERSION = os.getenv("APP_VERSION", "1.0")
+
+MAP_USER_AGENT = os.getenv(
+    "MAP_USER_AGENT",
+    f"SismoBot/{APP_VERSION} (+https://teu-dominio.pt)"
+)
+
+MAP_REFERER = os.getenv(
+    "MAP_REFERER",
+    "https://teu-dominio.pt/"
+)
+
 session = requests.Session()
-session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; SismoBot/2.0)"})
+
+session.headers.update({
+    "User-Agent": MAP_USER_AGENT,
+    "Accept": "application/json,text/plain,*/*",
+})
+
+tile_session = requests.Session()
+
+tile_session.headers.update({
+    "User-Agent": MAP_USER_AGENT,
+    "Referer": MAP_REFERER,
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+})
+
+# ============================================================
+# CONFIGURAÇÃO DOS MAPAS
+# ============================================================
+
+MAP_PROVIDER = os.getenv("MAP_PROVIDER", "osm").lower()
+
+MAP_ZOOM = int(os.getenv("MAP_ZOOM", "8"))
+
+MAP_TIMEOUT = float(os.getenv("MAP_TIMEOUT", "12"))
+
+# Cache persistente.
+TILE_CACHE_DIR = Path(
+    os.getenv("TILE_CACHE_DIR", "/tmp/atterratreme-tile-cache")
+)
+
+TILE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+OSM_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+OSM_ATTRIBUTION = "© OpenStreetMap contributors"
+
+OSM_PROVIDER = TileProvider(
+    name="OpenStreetMap",
+    url=OSM_TILE_URL,
+    attribution=OSM_ATTRIBUTION,
+    min_zoom=0,
+    max_zoom=19,
+)
+
+PORTUGAL_TZ = ZoneInfo("Europe/Lisbon")
 
 # Lock para evitar geração simultânea de imagens
 image_lock = threading.Lock()
 
+def in_bounding_boxes(sismo):
+    lat = sismo.get("latitude")
+    lon = sismo.get("longitude")
+
+    if lat is None or lon is None:
+        return False
+
+    for box in BOUNDING_BOXES:
+        if (
+            box["min_lat"] <= lat <= box["max_lat"]
+            and box["min_lon"] <= lon <= box["max_lon"]
+        ):
+            return True
+
+    return False
 
 def overlay_text(img, text, position, font, color):
     draw = ImageDraw.Draw(img)
     draw.text(position, text, font=font, fill=color)
 
+def get_map_provider():
+    if MAP_PROVIDER == "cartodb":
+        return ctx.providers.CartoDB.Voyager
+
+    return OSM_PROVIDER
+
 
 def create_map_image(df) -> Image.Image:
-    """Gera o mapa em memória e devolve um PIL.Image (sem gravar em disco)."""
+    """
+    Gera o mapa em memória.
+
+    Características:
+    - User-Agent identificável
+    - Referer
+    - cache persistente do contextily
+    - zoom controlado
+    - timeout
+    - attribution
+    - fallback sem basemap caso o provider falhe
+    """
+
     latest = df.iloc[-1]
 
     gdf = gpd.GeoDataFrame(
         df,
-        geometry=gpd.points_from_xy(df.longitude, df.latitude),
+        geometry=gpd.points_from_xy(
+            df.longitude,
+            df.latitude
+        ),
         crs="EPSG:4326"
     ).to_crs(epsg=3857)
 
     latest_point = gdf.iloc[-1]
+
     cx = latest_point.geometry.x
     cy = latest_point.geometry.y
+
+    # Janela aproximada de 350 km x 350 km.
     window = 175_000
 
-    fig = plt.figure(figsize=(6, 6), dpi=180)
+    fig = plt.figure(
+        figsize=(6, 6),
+        dpi=180
+    )
+
     ax = fig.add_axes([0, 0, 1, 1])
 
-    ax.set_xlim(cx - window, cx + window)
-    ax.set_ylim(cy - window, cy + window)
+    ax.set_xlim(
+        cx - window,
+        cx + window
+    )
+
+    ax.set_ylim(
+        cy - window,
+        cy + window
+    )
+
     ax.set_aspect("equal")
 
-    try:
-        ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik, attribution=False)
-    except Exception as e:
-        print(f"Aviso basemap: {e}")
+    # --------------------------------------------------------
+    # BASEMAP
+    # --------------------------------------------------------
 
-    # Halos e epicentro
-    ax.scatter(cx, cy, s=7000, color="red", alpha=0.10, zorder=2)
-    ax.scatter(cx, cy, s=2500, color="red", alpha=0.25, zorder=3)
-    ax.scatter(cx, cy, s=350, marker="*", color="darkred", edgecolors="white", linewidth=1.5, zorder=4)
+    basemap_ok = False
+
+    try:
+        provider = get_map_provider()
+
+        ctx.add_basemap(
+            ax,
+            source=provider,
+            zoom=MAP_ZOOM,
+            headers={
+                "User-Agent": MAP_USER_AGENT,
+                "Referer": MAP_REFERER,
+                "Accept": "image/png,image/*;q=0.9,*/*;q=0.8",
+            },
+            attribution=OSM_ATTRIBUTION if MAP_PROVIDER == "osm" else None,
+            timeout=MAP_TIMEOUT,
+            zoom_adjust=0,
+        )
+
+        basemap_ok = True
+
+    except Exception as e:
+        print(
+            f"[MAPA] Basemap indisponível "
+            f"(provider={MAP_PROVIDER}): {e}"
+        )
+
+    # --------------------------------------------------------
+    # FALLBACK
+    # --------------------------------------------------------
+
+    if not basemap_ok and MAP_PROVIDER == "osm":
+
+        print(
+            "[MAPA] OSM falhou. "
+            "A tentar CartoDB Voyager como fallback..."
+        )
+
+        try:
+            ctx.add_basemap(
+                ax,
+                source=ctx.providers.CartoDB.Voyager,
+                zoom=MAP_ZOOM,
+                timeout=MAP_TIMEOUT,
+                use_cache=True,
+                attribution=None,
+            )
+
+            basemap_ok = True
+
+        except Exception as fallback_error:
+
+            print(
+                f"[MAPA] Fallback também falhou: "
+                f"{fallback_error}"
+            )
+
+    # --------------------------------------------------------
+    # MARCADOR DO SISMO
+    # --------------------------------------------------------
+
+    ax.scatter(
+        cx,
+        cy,
+        s=7000,
+        color="red",
+        alpha=0.10,
+        zorder=2
+    )
+
+    ax.scatter(
+        cx,
+        cy,
+        s=2500,
+        color="red",
+        alpha=0.25,
+        zorder=3
+    )
+
+    ax.scatter(
+        cx,
+        cy,
+        s=350,
+        marker="*",
+        color="darkred",
+        edgecolors="white",
+        linewidth=1.5,
+        zorder=4
+    )
 
     ax.text(
-        cx, cy + 25000, f"M {latest['scale']:.1f}",
-        fontsize=16, fontweight="bold", ha="center", va="bottom",
+        cx,
+        cy + 25000,
+        f"M {latest['scale']:.1f}",
+        fontsize=16,
+        fontweight="bold",
+        ha="center",
+        va="bottom",
         color="black",
-        bbox=dict(facecolor="white", edgecolor="black", alpha=0.9, boxstyle="round,pad=0.3"),
+        bbox=dict(
+            facecolor="white",
+            edgecolor="black",
+            alpha=0.9,
+            boxstyle="round,pad=0.3"
+        ),
         zorder=5
     )
 
-    ax.set_axis_off()
-    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+    # Se não houve basemap, não deixa o mapa vazio.
+    if not basemap_ok:
+        ax.text(
+            0.5,
+            0.03,
+            "Mapa base temporariamente indisponível",
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            color="black",
+            bbox=dict(
+                facecolor="white",
+                alpha=0.8,
+                edgecolor="none"
+            ),
+            zorder=10
+        )
 
-    # Guardar diretamente em memória
+    ax.set_axis_off()
+
+    fig.subplots_adjust(
+        left=0,
+        right=1,
+        bottom=0,
+        top=1
+    )
+
+    # --------------------------------------------------------
+    # PNG EM MEMÓRIA
+    # --------------------------------------------------------
+
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=180, facecolor="white", pad_inches=0)
-    plt.close(fig)          # fecha a figura
-    plt.close('all')        # segurança extra
+
+    fig.savefig(
+        buf,
+        format="png",
+        dpi=180,
+        facecolor="white",
+        pad_inches=0
+    )
+
+    plt.close(fig)
+    plt.close("all")
+
     buf.seek(0)
 
     img = Image.open(buf).convert("RGB")
+
+    # O PIL pode manter referência ao buffer.
+    # Copiamos para memória independente.
+    img_copy = img.copy()
+
+    img.close()
     buf.close()
-    return img
+
+    return img_copy
 
 
 def generate_final_image(sismo_data) -> bytes:
@@ -231,16 +516,21 @@ def obter_sismos():
     # Converter time para datetime
     for s in sismos:
         try:
-            time_str = s["time"].replace("Z", "+00:00")
-            s["datetime"] = datetime.fromisoformat(time_str)
+            time_str = s["time"].replace("Z", "")
+            s["datetime"] = datetime.fromisoformat(time_str).replace(tzinfo=timezone.utc)
         except Exception:
             try:
-                s["datetime"] = datetime.fromisoformat(s["time"])
+                s["datetime"] = datetime.fromisoformat(s["time"]).replace(tzinfo=timezone.utc)
             except Exception:
                 try:
-                    s["datetime"] = datetime.strptime(s["time"], "%Y-%m-%d %H:%M:%S")
+                    s["datetime"] = datetime.strptime(
+                        s["time"], "%Y-%m-%d %H:%M:%S"
+                    ).replace(tzinfo=timezone.utc)
                 except Exception:
                     s["datetime"] = datetime.now(timezone.utc)
+
+        # Timezone de Potugal Continental
+        s["time_pt"] = s["datetime"].astimezone(PORTUGAL_TZ).strftime("%d-%m-%Y pelas %H:%M")
 
     sismos.sort(key=lambda x: x["datetime"], reverse=True)
     return {
@@ -261,59 +551,109 @@ def add_enviado(sismo_id: str):
     sismos_enviados.add(sismo_id)
     _sismos_order.append(sismo_id)
 
-
 def monitor_sismos():
     print("Monitor de sismos iniciado.")
     consecutive_errors = 0
+    cycle_count = 0
 
     while True:
+        cycle_count += 1
         try:
             data = obter_sismos()
 
-            if not data["data"]:
-                time.sleep(45)
-                continue
+            # FILTRO POR BOUNDING BOX
+            sismos_monitor = [
+                s for s in data["data"]
+                if in_bounding_boxes(s)
+            ]
 
-            novos = [s for s in data["data"] if s["time"] not in sismos_enviados]
-            # novos = data["data"][:10]  # apenas os 10 mais recentes (for testing purposes)
-            
-            if not novos:
-                consecutive_errors = 0
-                time.sleep(45)
-                continue
+            if sismos_monitor:
+                novos = [
+                    s for s in sismos_monitor
+                    if s["time"] not in sismos_enviados
+                ]
 
-            novos.sort(key=lambda x: x["datetime"])
-            print(f"Foram encontrados {len(novos)} novos sismos.")
+                # novos = sismos_monitor[:10]  # só para testes
 
-            for s in novos:
-                sismo = {
-                    "id": s["time"],
-                    "location": s.get("obsRegion") or "Portugal",
-                    "scale": s["magnitude"] or 0.0,
-                    "date": s["datetime"].strftime("%d-%m-%Y pelas %H:%M UTC"),
-                    "intensity": "Sem info a esta hora",
-                    "latitude": s["latitude"],
-                    "longitude": s["longitude"]
-                }
+                if novos:
+                    novos.sort(key=lambda x: x["datetime"])
+                    print(
+                        f"Foram encontrados {len(novos)} novos sismos "
+                        f"dentro das bounding boxes."
+                    )
 
-                print(f"Processar → {sismo['location']} M{sismo['scale']} | {sismo['id']}")
+                    for s in novos:
+                        sismo = {
+                            "id": s["time"],
+                            "location": s.get("obsRegion") or "Portugal",
+                            "scale": s["magnitude"] or 0.0,
+                            "date": s["time_pt"],
+                            "intensity": "Sem info a esta hora",
+                            "latitude": s["latitude"],
+                            "longitude": s["longitude"],
+                        }
 
-                try:
-                    image_bytes, info_image, map_image = generate_final_image(sismo)
-                    if enviar_discord(sismo, image_bytes, info_image, map_image):
-                        add_enviado(s["time"])
-                        time.sleep(1.5)
-                except Exception as e:
-                    print(f"Erro ao processar sismo {s['time']}: {e}")
-                    # não marca como enviado → tenta na próxima ronda
+                        print(
+                            f"Processar → {sismo['location']} "
+                            f"M{sismo['scale']} | {sismo['id']}"
+                        )
+
+                        try:
+                            image_bytes, info_image, map_image = generate_final_image(sismo)
+
+                            if enviar_discord(
+                                sismo,
+                                image_bytes,
+                                info_image,
+                                map_image
+                            ):
+                                add_enviado(s["time"])
+                                time.sleep(1.5)
+
+                        except Exception as e:
+                            print(
+                                f"Erro ao processar sismo {s['time']}: {e}"
+                            )
+                            # não marca como enviado → tenta na próxima ronda
 
             consecutive_errors = 0
             gc.collect()
 
+            # CEMS: a cada ~10 ciclos (~7–8 min), independente de haver sismos IPMA
+            if cycle_count % 10 == 0:
+                try:
+                    cems_novos = poll_new_earthquake_activations(
+                        session=session,
+                        only_relevant_geo=True,
+                    )
+
+                    for act in cems_novos:
+                        print(
+                            f"CEMS nova ativação sísmica: "
+                            f"{act.get('code')} — {act.get('name')} "
+                            f"({act.get('portal_url')})"
+                        )
+
+                        # Enviar aviso para o Discord
+                        # if DISCORD_WEBHOOK:
+                        #     session.post(
+                        #         DISCORD_WEBHOOK,
+                        #         json={
+                        #             "content": (
+                        #                 f"🛰️ **CEMS Rapid Mapping**\n"
+                        #                 f"**{act['code']}** — {act['name']}\n"
+                        #                 f"{act['portal_url']}"
+                        #             )
+                        #         },
+                        #         timeout=15,
+                        #     )
+
+                except Exception as e:
+                    print(f"CEMS poll: {e}")
+
         except Exception as e:
             consecutive_errors += 1
             print(f"Erro no monitor (#{consecutive_errors}): {e}")
-            # Backoff exponencial leve
             sleep_time = min(30 * consecutive_errors, 180)
             time.sleep(sleep_time)
             continue
