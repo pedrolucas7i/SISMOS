@@ -16,6 +16,7 @@ Used by [VOST Portugal](https://vost.pt) under the **#ATerraTreme** hashtag for 
 - **JSON API** (`/api/sismos`) with unified data for Mainland/Madeira and the Azores
 - **Automatic alert image generation** (template + map centered on the epicenter)
 - **Discord notifications** via webhook when a new earthquake is detected
+- **Firebase Cloud Messaging** topic notifications for subscribed mobile apps (optional)
 - **Healthcheck** (`/health`) for orchestrators (Coolify, Docker, etc.)
 - **Ready-to-deploy** with Docker / docker-compose
 
@@ -38,6 +39,7 @@ Used by [VOST Portugal](https://vost.pt) under the **#ATerraTreme** hashtag for 
 - Python ≥ 3.11 (3.12 recommended)
 - System dependencies for GeoPandas/GDAL (already included in the Docker image)
 - (Optional) Discord webhook
+- (Optional) Firebase service-account JSON for mobile push notifications
 
 ---
 
@@ -56,6 +58,13 @@ cp .env.example .env
 # Edit .env and set the webhook (optional)
 ```
 
+Firebase push is optional. Install the `firebase-admin` dependency from
+`requirements.txt`, set `FIREBASE_CREDENTIALS_PATH` to the service-account JSON,
+and subscribe mobile clients to the `todos` topic (or set `FIREBASE_TOPIC`).
+The Android app must also create the `high_importance_channel` notification
+channel used by the push payload. Keep the JSON outside version control and
+never add it to the Docker image.
+
 Start:
 
 ```bash
@@ -71,14 +80,22 @@ By default the application listens on `http://0.0.0.0:3000` (or the value of `PO
 | Variable               | Required | Description                                      |
 |------------------------|----------|--------------------------------------------------|
 | `DISCORD_WEBHOOK_URL`  | No       | Discord webhook URL for earthquake alerts        |
+| `FIREBASE_CREDENTIALS_PATH` | No  | Path to a mounted Firebase service-account JSON; unset disables push alerts |
+| `FIREBASE_TOPIC` | No | FCM topic to notify (default `todos`) |
 | `PORT`                 | No       | HTTP port (default `3000`, Coolify’s default)    |
 
 Example (`.env`):
 
 ```env
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+FIREBASE_CREDENTIALS_PATH=/run/secrets/firebase-service-account.json
+FIREBASE_TOPIC=todos
 PORT=3000
 ```
+
+For Docker/Coolify, mount the credential file as a runtime secret at the path in
+`FIREBASE_CREDENTIALS_PATH`; the repository's `notif/` directory is excluded
+from the image. Leave the path unset to run normally without Firebase.
 
 ---
 
@@ -128,6 +145,7 @@ Use the **Dockerfile** build pack. Coolify injects `PORT=3000` by default — do
    - Generates a map centered on the epicenter
    - Composes the final image with the alert template
    - Sends the image + message to Discord (if the webhook is configured)
+   - Sends an FCM notification to the configured topic (if credentials are configured)
 
 ---
 

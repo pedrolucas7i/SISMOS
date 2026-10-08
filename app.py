@@ -25,6 +25,8 @@ from xyzservices import TileProvider
 
 load_dotenv()
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_URL")
+FIREBASE_CREDENTIALS_PATH = os.getenv("FIREBASE_CREDENTIALS_PATH")
+FIREBASE_TOPIC = os.getenv("FIREBASE_TOPIC", "todos").strip() or "todos"
 # Coolify Dockerfile pack defaults PORT / Ports Exposes to 3000
 PORT = int(os.environ.get("PORT", "3000"))
 
@@ -481,6 +483,56 @@ def enviar_discord(sismo, image_bytes: bytes, info_image: bytes, map_image: byte
     return False
 
 
+def enviar_firebase(sismo):
+    if not FIREBASE_CREDENTIALS_PATH:
+        return False
+
+    try:
+        import firebase_admin
+        from firebase_admin import credentials, messaging
+    except ImportError:
+        print("Firebase configurado, mas firebase-admin não está instalado.")
+        return False
+
+    try:
+        try:
+            firebase_app = firebase_admin.get_app()
+        except ValueError:
+            cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
+            firebase_app = firebase_admin.initialize_app(cred)
+
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title="Alerta de Sismo",
+                body=(
+                    f"Foi detetado um sismo de magnitude {sismo['scale']} "
+                    f"em {sismo['location']} às {sismo['date']}."
+                ),
+            ),
+            data={
+                "tipo": "sismo",
+                "magnitude": str(sismo["scale"]),
+                "local": str(sismo["location"]),
+                "data": str(sismo["date"]),
+                "id": str(sismo.get("id", "")),
+            },
+            topic=FIREBASE_TOPIC,
+            android=messaging.AndroidConfig(
+                priority="high",
+                notification=messaging.AndroidNotification(
+                    sound="default",
+                    channel_id="high_importance_channel",
+                ),
+            ),
+        )
+        response = messaging.send(message, app=firebase_app)
+        print(f"Firebase: notificação enviada ({response}).")
+        return True
+    except Exception as e:
+        print(f"Erro ao enviar notificação Firebase: {e}")
+        return False
+
+
 def obter_sismos():
     sismos = []
 
@@ -573,7 +625,7 @@ def monitor_sismos():
                     if s["time"] not in sismos_enviados
                 ]
 
-                # novos = sismos_monitor[:10]  # só para testes
+                # novos = sismos_monitor[:2]  # só para testes
 
                 if novos:
                     novos.sort(key=lambda x: x["datetime"])
@@ -598,23 +650,32 @@ def monitor_sismos():
                             f"M{sismo['scale']} | {sismo['id']}"
                         )
 
+                        firebase_enviado = enviar_firebase(sismo)
+                        discord_enviado = False
+
                         try:
                             image_bytes, info_image, map_image = generate_final_image(sismo)
 
-                            if enviar_discord(
+                            discord_enviado = enviar_discord(
                                 sismo,
                                 image_bytes,
                                 info_image,
                                 map_image
-                            ):
-                                add_enviado(s["time"])
-                                time.sleep(1.5)
+                            )
 
                         except Exception as e:
                             print(
                                 f"Erro ao processar sismo {s['time']}: {e}"
                             )
-                            # não marca como enviado → tenta na próxima ronda
+
+                        if (
+                            firebase_enviado
+                            or discord_enviado
+                            or (not FIREBASE_CREDENTIALS_PATH and not DISCORD_WEBHOOK)
+                        ):
+                            add_enviado(s["time"])
+                            if discord_enviado:
+                                time.sleep(1.5)
 
             consecutive_errors = 0
             gc.collect()
