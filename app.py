@@ -503,7 +503,7 @@ def enviar_firebase(sismo):
 
         message = messaging.Message(
             notification=messaging.Notification(
-                title="Alerta de Sismo",
+                title="Novo Sismo",
                 body=(
                     f"Foi detetado um sismo de magnitude {sismo['scale']} "
                     f"em {sismo['location']} às {sismo['date']}."
