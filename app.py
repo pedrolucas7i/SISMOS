@@ -42,17 +42,17 @@ API_ACORES = "https://api.ipma.pt/open-data/observation/seismic/3.json"
 BOUNDING_BOXES = [
     {
         "name": "Portugal Continental",
-        "min_lon": -9.733887,
-        "min_lat": 36.791691,
-        "max_lon": -6.064453,
-        "max_lat": 42.309815,
+        "min_lon": -10.19531,
+        "min_lat": 36.52729,
+        "max_lon": -5.55908,
+        "max_lat": 42.66628,
     },
     {
         "name": "Açores",
-        "min_lon": -31.530762,
-        "min_lat": 36.544949,
-        "max_lon": -24.301758,
-        "max_lat": 39.993956,
+        "min_lon": -31.97021,
+        "min_lat": 36.45664,
+        "max_lon": -24.25781,
+        "max_lat": 40.21244,
     },
     {
         "name": "Madeira",
@@ -454,10 +454,10 @@ def enviar_discord(sismo, image_bytes: bytes, info_image: bytes, map_image: byte
         return False
 
     mensagem = (
-        f"🌍 **Novo sismo registado**\n\n"
-        f"📍 Local: {sismo['location']}\n"
-        f"📈 Magnitude: {sismo['scale']}\n"
-        f"🕒 {sismo['date']}"
+        f"#ATerraTreme\n"
+        f"O IPMA registou um sismo de magnitude {sismo['scale']}, com epicentro a {sismo['location']}, dia {sismo['date']}\n"
+        f"Ainda não há relatos de ter sido sentido.\n"
+        f"✍️Sentiste este sismo? Preenche o formulário do IPMA em https://bit.ly/sentiumsismo"
     )
 
     for tentativa in range(1, tentativas + 1):
@@ -653,14 +653,15 @@ def monitor_sismos():
                         discord_enviado = False
 
                         try:
-                            image_bytes, info_image, map_image = generate_final_image(sismo)
+                            if sismo["scale"] >= 2.2:
+                                image_bytes, info_image, map_image = generate_final_image(sismo)
 
-                            discord_enviado = enviar_discord(
-                                sismo,
-                                image_bytes,
-                                info_image,
-                                map_image
-                            )
+                                discord_enviado = enviar_discord(
+                                    sismo,
+                                    image_bytes,
+                                    info_image,
+                                    map_image
+                                )
 
                         except Exception as e:
                             print(
