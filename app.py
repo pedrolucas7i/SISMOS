@@ -454,10 +454,10 @@ def enviar_discord(sismo, image_bytes: bytes, info_image: bytes, map_image: byte
         return False
 
     mensagem = (
-        f"🌍 **Novo sismo registado**\n\n"
-        f"📍 Local: {sismo['location']}\n"
-        f"📈 Magnitude: {sismo['scale']}\n"
-        f"🕒 {sismo['date']}"
+        f"#ATerraTreme\n"
+        f"O IPMA registou um sismo de magnitude {sismo['scale']}, com epicentro a {sismo['location']}, dia {sismo['date']}\n"
+        f"Ainda não há relatos de ter sido sentido.\n"
+        f"✍️Sentiste este sismo? Preenche o formulário do IPMA em https://bit.ly/sentiumsismo"
     )
 
     for tentativa in range(1, tentativas + 1):
@@ -653,14 +653,15 @@ def monitor_sismos():
                         discord_enviado = False
 
                         try:
-                            image_bytes, info_image, map_image = generate_final_image(sismo)
+                            if sismo["scale"] >= 2.2:
+                                image_bytes, info_image, map_image = generate_final_image(sismo)
 
-                            discord_enviado = enviar_discord(
-                                sismo,
-                                image_bytes,
-                                info_image,
-                                map_image
-                            )
+                                discord_enviado = enviar_discord(
+                                    sismo,
+                                    image_bytes,
+                                    info_image,
+                                    map_image
+                                )
 
                         except Exception as e:
                             print(
